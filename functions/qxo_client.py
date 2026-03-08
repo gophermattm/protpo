@@ -116,6 +116,35 @@ class QxoClient:
         filter_cats = categories or self.ROOFING_CATEGORIES
         return [item for item in all_items if item.get("category") in filter_cats]
 
+    def submit_quote(self, project_name: str, items: list[dict]) -> dict:
+        from datetime import date
+        token = self.get_token()
+
+        quote_items = []
+        for item in items:
+            quote_items.append({
+                "itemId": item["skuId"],
+                "quantity": item["quantity"],
+                "uom": item.get("uom", "EA"),
+            })
+
+        payload = {
+            "accountId": self.ACCOUNT_ID,
+            "quoteName": f"{project_name} - {date.today().isoformat()}",
+            "workType": "R",
+            "jobName": project_name,
+            "quoteItems": quote_items,
+        }
+
+        resp = requests.post(
+            f"{self.base_url}/v2/rest/com/becn/submitQuote",
+            json=payload,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     def sync_catalog_to_firestore(self, items: list[dict]) -> int:
         batch = self.db.batch()
         catalog_col = self.db.collection("qxo_catalog")

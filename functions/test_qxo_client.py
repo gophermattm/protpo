@@ -192,3 +192,33 @@ def test_sync_catalog_writes_batches():
     assert count == 2
     assert mock_batch.set.call_count == 2
     mock_batch.commit.assert_called_once()
+
+
+# ── Task 14: Quote submission ─────────────────────────────────────
+
+@patch("qxo_client.requests.post")
+@patch.object(QxoClient, "get_token", return_value="tok-123")
+def test_submit_quote_sends_correct_payload(mock_token, mock_post):
+    client, _ = _make_client()
+    mock_post.return_value = MagicMock(
+        status_code=200,
+        json=MagicMock(return_value={"quoteId": "Q-12345", "status": "submitted"}),
+    )
+
+    result = client.submit_quote(
+        project_name="123 Main St Reroof",
+        items=[
+            {"skuId": "253729", "quantity": 15, "uom": "RL"},
+            {"skuId": "413335", "quantity": 40, "uom": "BDL"},
+        ],
+    )
+
+    assert result["quoteId"] == "Q-12345"
+    call_kwargs = mock_post.call_args
+    body = call_kwargs[1]["json"]
+    assert body["accountId"] == "314102"
+    assert body["jobName"] == "123 Main St Reroof"
+    assert body["workType"] == "R"
+    assert len(body["quoteItems"]) == 2
+    assert body["quoteItems"][0]["itemId"] == "253729"
+    assert body["quoteItems"][0]["quantity"] == 15

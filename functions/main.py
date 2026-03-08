@@ -167,3 +167,38 @@ def syncQxoCatalog(req: https_fn.CallableRequest):
         return {"synced": count, "message": f"Synced {count} catalog items to Firestore"}
     except Exception as e:
         raise https_fn.HttpsError("internal", f"Catalog sync error: {str(e)}")
+
+
+@https_fn.on_call(
+    timeout_sec=30,
+    memory=options.MemoryOption.MB_256,
+    region="us-central1",
+    secrets=["QXO_PASSWORD"],
+)
+def submitQxoQuote(req: https_fn.CallableRequest):
+    import os
+    from qxo_client import QxoClient
+
+    data = req.data or {}
+    project_name = data.get("projectName")
+    items = data.get("items")
+
+    if not project_name:
+        raise https_fn.HttpsError("invalid-argument", "projectName is required")
+    if not items or not isinstance(items, list):
+        raise https_fn.HttpsError("invalid-argument", "items must be a non-empty list")
+
+    password = os.environ.get("QXO_PASSWORD")
+    if not password:
+        raise https_fn.HttpsError("internal", "QXO_PASSWORD secret not configured")
+
+    client = QxoClient(
+        db=db,
+        password=password,
+        base_url=os.environ.get("QXO_BASE_URL", "https://uat-api.qxo.com"),
+    )
+    try:
+        result = client.submit_quote(project_name=project_name, items=items)
+        return result
+    except Exception as e:
+        raise https_fn.HttpsError("internal", f"Quote submission error: {str(e)}")
