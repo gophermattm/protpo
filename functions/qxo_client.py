@@ -13,6 +13,8 @@ class QxoClient:
     TOKEN_REFRESH_BUFFER = 60  # seconds before expiry to trigger refresh
     PRICE_CACHE_TTL = 86400  # 24 hours
 
+    ROOFING_CATEGORIES = ["Roofing", "Insulation", "Waterproofing", "Adhesives", "Fasteners"]
+
     def __init__(self, db, password, base_url="https://uat-api.qxo.com"):
         self.db = db
         self.password = password
@@ -99,3 +101,38 @@ class QxoClient:
         prices = self.get_pricing(sku_ids)
         doc_ref.set({"prices": prices, "cached_at": time.time()})
         return prices
+
+    # ── Catalog ────────────────────────────────────────────────────────
+
+    def download_catalog(self, categories: list[str] | None = None) -> list[dict]:
+        token = self.get_token()
+        resp = requests.get(
+            f"{self.base_url}/v3/ctUsCatalogDownloadJson",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=120,
+        )
+        resp.raise_for_status()
+        all_items = resp.json()
+        filter_cats = categories or self.ROOFING_CATEGORIES
+        return [item for item in all_items if item.get("category") in filter_cats]
+
+    def sync_catalog_to_firestore(self, items: list[dict]) -> int:
+        batch = self.db.batch()
+        catalog_col = self.db.collection("qxo_catalog")
+        count = 0
+        for i, item in enumerate(items):
+            doc_ref = catalog_col.document(item["itemNumber"])
+            batch.set(doc_ref, {
+                "itemNumber": item.get("itemNumber"),
+                "description": item.get("description"),
+                "unitOfMeasure": item.get("unitOfMeasure"),
+                "category": item.get("category"),
+                "productNumber": item.get("productNumber"),
+            })
+            count += 1
+            if (i + 1) % 500 == 0:
+                batch.commit()
+                batch = self.db.batch()
+        if count % 500 != 0:
+            batch.commit()
+        return count

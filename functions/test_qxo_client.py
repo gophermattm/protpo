@@ -155,3 +155,40 @@ def test_get_pricing_cached_calls_api_when_expired(mock_pricing):
     assert result == {"SKU-Y": {"EA": 7.0}}
     mock_pricing.assert_called_once_with(skus)
     cache_doc.set.assert_called_once()
+
+
+# ── Task 7: Catalog download ────────────────────────────────────────
+
+@patch("qxo_client.requests.get")
+@patch.object(QxoClient, "get_token", return_value="tok-123")
+def test_download_catalog_filters_by_category(mock_token, mock_get):
+    client, _ = _make_client()
+    mock_get.return_value = MagicMock(
+        status_code=200,
+        json=MagicMock(return_value=[
+            {"itemNumber": "253729", "description": "TPO 60mil", "category": "Roofing", "unitOfMeasure": "RL", "productNumber": "P1"},
+            {"itemNumber": "999999", "description": "Lumber 2x4", "category": "Lumber", "unitOfMeasure": "EA", "productNumber": "P2"},
+            {"itemNumber": "413335", "description": "Polyiso 2.5in", "category": "Insulation", "unitOfMeasure": "BDL", "productNumber": "P3"},
+        ]),
+    )
+    items = client.download_catalog(categories=["Roofing", "Insulation"])
+    assert len(items) == 2
+    assert items[0]["itemNumber"] == "253729"
+    assert items[1]["itemNumber"] == "413335"
+
+
+# ── Task 8: Catalog sync to Firestore ───────────────────────────────
+
+def test_sync_catalog_writes_batches():
+    client, db = _make_client()
+    mock_batch = MagicMock()
+    db.batch.return_value = mock_batch
+
+    items = [
+        {"itemNumber": "SKU1", "description": "Item 1", "unitOfMeasure": "EA", "category": "Roofing", "productNumber": "P1"},
+        {"itemNumber": "SKU2", "description": "Item 2", "unitOfMeasure": "BDL", "category": "Insulation", "productNumber": "P2"},
+    ]
+    count = client.sync_catalog_to_firestore(items)
+    assert count == 2
+    assert mock_batch.set.call_count == 2
+    mock_batch.commit.assert_called_once()
