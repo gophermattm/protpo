@@ -1,7 +1,6 @@
 from firebase_functions import https_fn, options
 from firebase_admin import initialize_app, firestore
 import vertexai
-from vertexai.generative_models import GenerativeModel
 from vertexai.language_models import TextEmbeddingModel
 from google.cloud.firestore_v1.vector import Vector
 from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
@@ -13,14 +12,32 @@ db = firestore.client()
 
 PROJECT_ID = "tpo-pro-245d1"
 LOCATION = "us-central1"
+CLAUDE_MODEL = "claude-opus-5-5"
+
+
+def _ask_claude(prompt, system="", effort="medium"):
+    import anthropic
+    kw = {
+        "model": CLAUDE_MODEL,
+        "max_tokens": 16000,
+        "output_config": {"effort": effort},
+        "betas": ["server-side-fallback-2026-07-01"],
+        "extra_body": {"fallbacks": "default"},
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    if system:
+        kw["system"] = system
+    msg = anthropic.Anthropic().beta.messages.create(**kw)
+    if msg.stop_reason == "refusal":
+        raise RuntimeError("Claude declined to answer this request")
+    return "".join(b.text for b in msg.content if b.type == "text")
 
 @https_fn.on_call(
-    timeout_sec=60,
+    timeout_sec=120,
     memory=options.MemoryOption.GB_1,
     region="us-central1"
 )
 def askVersico(req: https_fn.CallableRequest):
-    import json as _json, anthropic as _anthropic
     _data = req.data or {}
     if _data.get("mode") in ("audit", "nl", "sow"):
         mode = _data.get("mode")
@@ -29,11 +46,8 @@ def askVersico(req: https_fn.CallableRequest):
         if not prompt:
             raise https_fn.HttpsError("invalid-argument", "prompt required")
         try:
-            _client = _anthropic.Anthropic()
-            _kw = {"model": "claude-sonnet-4-20250514", "max_tokens": 1000 if mode == "audit" else 300, "messages": [{"role": "user", "content": prompt}]}
-            if system: _kw["system"] = system
-            _msg = _client.messages.create(**_kw)
-            return {"result": {"result": _msg.content[0].text}}
+            text = _ask_claude(prompt, system, effort="medium" if mode == "audit" else "low")
+            return {"result": {"result": text}}
         except Exception as _e:
             raise https_fn.HttpsError("internal", str(_e))
     # 2. Initialize Vertex AI
@@ -81,9 +95,7 @@ def askVersico(req: https_fn.CallableRequest):
 
         context_text = "\n---\n".join(context_parts)
 
-        # 6. Generate Answer with Gemini 2.0 Flash
-        chat_model = GenerativeModel("gemini-2.0-flash-001")
-        
+        # 6. Generate Answer with Claude
         # Professional Engineering Persona Prompt
         prompt = (
             f"You are VersiBot, a senior roofing engineer. Your goal is to synthesize an answer "
@@ -96,10 +108,10 @@ def askVersico(req: https_fn.CallableRequest):
             f"USER QUESTION: {user_question}"
         )
         
-        response = chat_model.generate_content(prompt)
+        answer = _ask_claude(prompt)
         
         return {
-            "answer": response.text,
+            "answer": answer,
             "sources": human_sources # Sending back the clean labels!
         }
 
